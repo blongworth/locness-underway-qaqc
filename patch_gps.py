@@ -74,13 +74,17 @@ def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str =
         strategy="backward",
         tolerance=timedelta(seconds=1.5)
     )
+    # Add source column based on whether primary data is null
+    source_expr = pl.when(pl.col(value_cols[0]).is_null()).then(pl.lit("gpx")).otherwise(pl.lit("gps"))
+    joined = joined.with_columns(source_expr.alias("source"))
+    
     # Fill missing values in primary with secondary
     for col in value_cols:
         joined = joined.with_columns(
             pl.col(col).fill_null(pl.col(f"{col}_sec")).alias(col)
         )
-    # Drop secondary columns
-    joined = joined.select([time_col] + value_cols)
+    # Select time, value columns, and source column
+    joined = joined.select([time_col] + value_cols + ["source"])
     return joined
 
 def main():
@@ -135,6 +139,9 @@ def main():
     gpx_median_freq = float(gpx_diffs.median())
     print(f"Median time frequency: {gpx_median_freq:.2f} seconds")
     
+    # Add 46 seconds offset to GPX times
+    gpx_df = gpx_df.with_columns((pl.col("datetime_utc") + timedelta(seconds=46)))
+    
     # Fill missing values from GPX data
     filled = fill_missing(gps_regular, gpx_df, time_col=time_col, value_cols=value_cols)
 
@@ -160,6 +167,11 @@ def main():
         (pl.col("datetime_utc") >= first_gap_time - window) &
         (pl.col("datetime_utc") <= first_gap_time + window)
     ))
+    
+    # Write filled DataFrame to parquet file
+    output_path = "data/filled_gps.parquet"
+    filled.write_parquet(output_path)
+    print(f"\nWrote filled GPS data to {output_path}")
 
 if __name__ == "__main__":
     main()
