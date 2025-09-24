@@ -6,6 +6,7 @@ The TSG files contain temperature, conductivity, salinity, and position data.
 """
 
 import polars as pl
+import sqlite3
 from datetime import datetime, timedelta
 import re
 
@@ -186,42 +187,89 @@ def read_tsg(filepath):
         )
     return df
     
-if __name__ == '__main__':
-    # Example usage
-    import sys
-    
-    if len(sys.argv) != 2:
-        print("Usage: python tsg_parser.py <tsg_file>")
-        sys.exit(1)
-        
-    tsg_file = sys.argv[1]
-    df = read_tsg(tsg_file)
-    
-    # write out to parquet
-    if df is not None:
-        df.write_parquet("tsg.parquet")
-        df.write_csv("tsg.csv")
 
-    # Print summary statistics
-    if df is None:
-        print("No data to display")
-        sys.exit(1)
-        
-    print("\nDataset Summary:")
-    print("-" * 40)
+def read_tsg_table_to_polars(sqlite_path, table_name="tsg"):
+    conn = sqlite3.connect(sqlite_path)
+    query = f"SELECT * FROM {table_name}"
+    df = pl.read_database(query, conn)
+    # Convert 'datetime_utc' from unix epoch integer to polars Datetime in UTC
+    if "datetime_utc" in df.columns:
+        df = df.with_columns(
+            (pl.col("datetime_utc") * 1_000_000).cast(pl.Datetime("us"))
+        )
+    conn.close()
+    return df
+
+
+def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str = "datetime_utc", value_cols: list = None) -> pl.DataFrame:
+    if value_cols is None:
+        value_cols = [col for col in primary.columns if col != time_col]
+    # Sort both dataframes by time
+    primary = primary.sort(time_col)
+    secondary = secondary.sort(time_col)
+    # Suffix columns in secondary to avoid name clash
+    secondary_renamed = secondary.rename({col: f"{col}_sec" for col in value_cols})
+    # Left join on time
+    joined = primary.join_asof(
+        secondary_renamed,
+        left_on=time_col,
+        right_on=time_col,
+        strategy="backward",
+        tolerance=timedelta(seconds=2.5)
+    )
+    # Add source column based on whether primary data is null
+    source_expr = pl.when(pl.col(value_cols[0]).is_null()).then(pl.lit("ship")).otherwise(pl.lit("uw"))
+    joined = joined.with_columns(source_expr.alias("source"))
     
-    if df.height > 0:
+    # Fill missing values in primary with secondary
+    for col in value_cols:
+        joined = joined.with_columns(
+            pl.col(col).fill_null(pl.col(f"{col}_sec")).alias(col)
+        )
+    # Select time, value columns, and source column
+    joined = joined.select([time_col] + value_cols + ["source"])
+    return joined
+
+
+def fill_tsg(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap", output_path="data/filled_tsg.parquet"):
+    uw_df = read_tsg_table_to_polars(db_path, table_name="tsg").select([
+        pl.col("datetime_utc"),
+        pl.col("temp").alias("temperature"),
+        pl.col("cond"),
+        pl.col("salinity")
+    ])
+    print(uw_df.columns)
+    ship_df = read_tsg(tsg_file)
+    ship_df = ship_df.select([
+        pl.col("ts").alias("datetime_utc"),
+        pl.col("t1").alias("temperature"),
+        pl.col("c1").alias("cond"),
+        pl.col("s").alias("salinity")
+    ])
+
+    print(ship_df.describe())
+
+    filled_df = fill_missing(uw_df, ship_df)
+
+    if filled_df.height > 0:
         # Get first and last times
-        first_row = df.row(0)
-        last_row = df.row(-1)
+        first_row = filled_df.row(0)
+        last_row = filled_df.row(-1)
         # Get the datetime column index
-        datetime_idx = df.get_column_index('datetime')
+        datetime_idx = filled_df.get_column_index('datetime_utc')
         first_time = first_row[datetime_idx]
         last_time = last_row[datetime_idx]
         
         print(f"Time range: {first_time} to {last_time}")
-        print(f"Number of records: {df.height}")
+        print(f"Number of records: {filled_df.height}")
         print("\nSummary Statistics:")
-        print(df.describe())
+        print(filled_df.describe())
     else:
         print("DataFrame is empty")
+    
+    filled_df.write_parquet(output_path)
+    return filled_df
+    
+if __name__ == '__main__':
+    fill_tsg()
+        

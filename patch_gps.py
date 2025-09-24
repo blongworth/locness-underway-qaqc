@@ -173,5 +173,7 @@ def main():
     filled.write_parquet(output_path)
     print(f"\nWrote filled GPS data to {output_path}")
 
+    return filled
+
 if __name__ == "__main__":
     main()
