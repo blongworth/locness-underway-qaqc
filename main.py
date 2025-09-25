@@ -280,6 +280,10 @@ def read_ph_table_to_polars(db_path: str) -> pl.DataFrame:
     """
     with sqlite3.connect(db_path) as conn:
         df = pl.read_database("SELECT * FROM ph", connection=conn)
+        if "datetime_utc" in df.columns:
+            df = df.with_columns(
+            pl.col("datetime_utc").cast(pl.Int64).cast(pl.Datetime("us"))
+            )
     
     # Validate data
     # if not validate_ph_data(df):
@@ -351,6 +355,11 @@ def read_rho_table_to_polars(db_path: str) -> pl.DataFrame:
     # Open a SQLite connection and use it for reading the table
     with sqlite3.connect(db_path) as conn:
         df = pl.read_database("SELECT * FROM rhodamine", connection=conn)
+        # Convert unix integer timestamp to polars datetime (assuming seconds since epoch)
+        if "datetime_utc" in df.columns:
+            df = df.with_columns(
+            pl.col("datetime_utc").cast(pl.Int64).cast(pl.Datetime("us"))
+            )
     
     # Validate data
     if not validate_rho_data(df):
@@ -379,11 +388,11 @@ def combine_data(
     """
     # Select needed columns and combine dfs to dictionary
     dfs = {
-        "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]),
-        "tsg": tsg_df.select(["datetime_utc", "temperature", "salinity"]),
-        "ph": ph_df.select(["datetime_utc", "vrse"]),
-        # "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
-        "rho": rho_df.select(["datetime_utc", "rho_ppb"]),
+        "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]).to_pandas(),
+        "tsg": tsg_df.select(["datetime_utc", "temperature", "salinity"]).to_pandas(),
+        "ph": ph_df.select(["datetime_utc", "vrse"]).to_pandas(),
+        # "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]).to_pandas(),
+        "rho": rho_df.select(["datetime_utc", "rho_ppb"]).to_pandas(),
     }
     
     resample_interval = config["resample-db"].get("db_res_int", "2s")

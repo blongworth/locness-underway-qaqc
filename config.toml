@@ -3,8 +3,10 @@
 #db_path= "C:/Users/CSL 2/Documents/LOCNESS_data/database/locness.db"
 db_path = "/Users/brett/Documents/LOC-02/locness_post_res.db"
 #parquet_path = "G:/Shared drives/locness/synthetic_data/locness.parquet"
+parquet_path = "loc02_uw_qc.parquet"
 #parquet_path = "/Users/brett/Library/CloudStorage/GoogleDrive-blongworth@whoi.edu/Shared drives/locness/synthetic_data/locness.parquet"
 # add csv_path to write summary csv
+csv_path = "loc02_uw_qc.csv"
 #csv_path  = "G:/Shared drives/locness/ship_data/locness.csv"
 #log_path = "C:/Users/CSL 2/Documents/LOCNESS_data/logs/datamanager.log"
 log_path = "/Users/brett/Projects/locness/locness-datamanager/data/datamanager.log"
