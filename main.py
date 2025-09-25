@@ -20,6 +20,7 @@ from datetime import timedelta
 from patch_gps import main as patch_gps
 from tsg_parser import fill_tsg
 from resampler import resample_and_join, resample_polars_dfs, add_corrected_ph
+from loc_02_apply_ph_qc import read_ph_flags, apply_ph_flags
 import sqlite3
 
 @task
@@ -265,7 +266,7 @@ def validate_ph_data(df: pl.DataFrame) -> bool:
     return True
 
 @task
-def read_ph_table_to_polars(db_path: str) -> pl.DataFrame:
+def read_ph_and_flag(db_path: str, flag_path: str) -> pl.DataFrame:
     """Read pH data from SQLite database as a Prefect task.
     
     Args:
@@ -278,6 +279,7 @@ def read_ph_table_to_polars(db_path: str) -> pl.DataFrame:
         FileNotFoundError: If database file not found
         ValueError: If data validation fails
     """
+    # read ph data
     with sqlite3.connect(db_path) as conn:
         df = pl.read_database("SELECT * FROM ph", connection=conn)
         if "datetime_utc" in df.columns:
@@ -298,7 +300,11 @@ def read_ph_table_to_polars(db_path: str) -> pl.DataFrame:
     # Validate data
     # if not validate_ph_data(df):
     #     raise ValueError("pH data validation failed")
-            
+
+    # read ph flags
+    flag_path = "loc02-ph-qc-flags.csv"
+    ph_flags = read_ph_flags(flag_path)
+    df = apply_ph_flags(df, ph_flags)
     return df
 
 def validate_rho_data(df: pl.DataFrame) -> bool:
@@ -409,8 +415,7 @@ def combine_data(
     dfs = {
         "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]),
         "tsg": tsg_df.select(["datetime_utc", "temperature", "salinity"]),
-        "ph": ph_df.select(["datetime_utc", "vrse"]),
-        # "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
+        "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
         "rho": rho_df.select(["datetime_utc", "rho_ppb"]),
     }
     
@@ -467,7 +472,7 @@ def main():
     # Process all data sources in parallel
     gps_df = process_gps()
     tsg_df = process_tsg(config)
-    ph_df = read_ph_table_to_polars(config["paths"]["db_path"])
+    ph_df = read_ph_and_flag(config["paths"]["db_path"], "loc02-ph-qc-flags.csv")
     rho_df = read_rho_table_to_polars(config["paths"]["db_path"])
     
     # Combine data
