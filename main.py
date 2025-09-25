@@ -19,7 +19,7 @@ from prefect.tasks import task_input_hash
 from datetime import timedelta
 from patch_gps import main as patch_gps
 from tsg_parser import fill_tsg
-from resampler import resample_and_join, add_corrected_ph
+from resampler import resample_and_join, resample_polars_dfs, add_corrected_ph
 import sqlite3
 
 @task
@@ -282,9 +282,19 @@ def read_ph_table_to_polars(db_path: str) -> pl.DataFrame:
         df = pl.read_database("SELECT * FROM ph", connection=conn)
         if "datetime_utc" in df.columns:
             df = df.with_columns(
-            pl.col("datetime_utc").cast(pl.Int64).cast(pl.Datetime("us"))
+            (pl.col("datetime_utc").cast(pl.Int64) * 1_000_000).cast(pl.Datetime("us"))
             )
     
+    # Print first 10 rows
+    print("\nFirst 10 rows of rhodamine data:")
+    print(df.head(10))
+
+    # Print dataframe schema and summary
+    print("\nDataframe Schema:")
+    print(df.schema)
+
+    print("\nDataframe Summary:")
+    print(df.describe())
     # Validate data
     # if not validate_ph_data(df):
     #     raise ValueError("pH data validation failed")
@@ -322,7 +332,7 @@ def validate_rho_data(df: pl.DataFrame) -> bool:
         return False
         
     # Check value ranges (typical rhodamine concentrations in ppb)
-    rho_range = (0, 100)  # Adjust range based on expected concentrations
+    rho_range = (-1, 500)  # Adjust range based on expected concentrations
     
     rho_invalid = df.filter(
         (pl.col("rho_ppb") < rho_range[0]) | 
@@ -358,9 +368,18 @@ def read_rho_table_to_polars(db_path: str) -> pl.DataFrame:
         # Convert unix integer timestamp to polars datetime (assuming seconds since epoch)
         if "datetime_utc" in df.columns:
             df = df.with_columns(
-            pl.col("datetime_utc").cast(pl.Int64).cast(pl.Datetime("us"))
+            (pl.col("datetime_utc").cast(pl.Int64) * 1_000_000).cast(pl.Datetime("us"))
             )
-    
+    # Print first 10 rows
+    print("\nFirst 10 rows of rhodamine data:")
+    print(df.head(10))
+
+    # Print dataframe schema and summary
+    print("\nDataframe Schema:")
+    print(df.schema)
+
+    print("\nDataframe Summary:")
+    print(df.describe())
     # Validate data
     if not validate_rho_data(df):
         raise ValueError("Rhodamine data validation failed")
@@ -388,15 +407,15 @@ def combine_data(
     """
     # Select needed columns and combine dfs to dictionary
     dfs = {
-        "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]).to_pandas(),
-        "tsg": tsg_df.select(["datetime_utc", "temperature", "salinity"]).to_pandas(),
-        "ph": ph_df.select(["datetime_utc", "vrse"]).to_pandas(),
-        # "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]).to_pandas(),
-        "rho": rho_df.select(["datetime_utc", "rho_ppb"]).to_pandas(),
+        "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]),
+        "tsg": tsg_df.select(["datetime_utc", "temperature", "salinity"]),
+        "ph": ph_df.select(["datetime_utc", "vrse"]),
+        # "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
+        "rho": rho_df.select(["datetime_utc", "rho_ppb"]),
     }
     
     resample_interval = config["resample-db"].get("db_res_int", "2s")
-    return resample_and_join(dfs, resample_interval=resample_interval)
+    return resample_polars_dfs(dfs, interval=resample_interval)
 
 @task
 def add_ph_corrections(df: pl.DataFrame, config: dict) -> pl.DataFrame:
@@ -421,6 +440,18 @@ def save_outputs(df: pl.DataFrame, config: dict) -> None:
         df: Processed DataFrame to save
         config: Configuration dictionary with output paths
     """
+
+    # Print first 10 rows
+    print("\nFirst 10 rows of combined data:")
+    print(df.head(10))
+
+    # Print dataframe schema and summary
+    print("\nDataframe Schema:")
+    print(df.schema)
+
+    print("\nDataframe Summary:")
+    print(df.describe())
+
     if "parquet_path" in config["paths"]:
         df.write_parquet(config["paths"]["parquet_path"])
     

@@ -12,7 +12,65 @@ import pandas as pd
 import logging
 from typing import Optional, Dict
 from isfetphcalc import calc_ph
+import polars as pl
 
+def resample_polars_dfs(dfs: dict[str, pl.DataFrame], interval: str) -> pl.DataFrame:
+    """Resample multiple Polars DataFrames to a regular time grid.
+    
+    Args:
+        dfs: Dict of DataFrames with datetime_utc column
+        interval: Resampling interval (e.g. '2s')
+        
+    Returns:
+        Combined DataFrame resampled to regular time grid
+    """
+    # Handle empty input cases
+    valid_dfs = {name: df for name, df in dfs.items() if not df.is_empty()}
+    if not valid_dfs:
+        return pl.DataFrame()
+    
+    # Get time range from all dataframes efficiently
+    time_bounds = pl.concat([
+        df.select(
+            pl.col('datetime_utc').min().alias('min'),
+            pl.col('datetime_utc').max().alias('max')
+        ) for df in valid_dfs.values()
+    ]).select(
+        pl.col('min').min().alias('start'),
+        pl.col('max').max().alias('end')
+    )
+    
+    if time_bounds.is_empty():
+        return pl.DataFrame()
+    
+    start_time, end_time = time_bounds.row(0)
+    seconds = int(interval[:-1])  # Extract seconds from interval string
+    
+    # Create time grid using Polars datetime_range
+    result = pl.DataFrame({
+        'datetime_utc': pl.datetime_range(
+            start_time,
+            end_time,
+            interval=f'{seconds}s',
+            eager=True
+        )
+    })
+    
+    # Process each dataframe
+    for df in valid_dfs.values():
+        # Sort both dataframes by datetime
+        df = df.sort('datetime_utc')
+        result = result.sort('datetime_utc')
+        
+        # Perform asof join with 2s tolerance
+        result = result.join_asof(
+            df, 
+            on='datetime_utc',
+            strategy='backward',
+            tolerance='4s'
+        )
+    
+    return result
 
 def resample_and_join(raw_data: Dict[str, pd.DataFrame], resample_interval: str) -> pd.DataFrame:
     """
@@ -109,62 +167,51 @@ def resample_and_join(raw_data: Dict[str, pd.DataFrame], resample_interval: str)
     
     return result[expected_cols]
 
-def add_corrected_ph(df: pd.DataFrame, ph_k0: float, ph_k2: float) -> pd.DataFrame:
-    """Add corrected pH column to DataFrame."""
-    if 'temp' not in df.columns or 'salinity' not in df.columns or 'vrse' not in df.columns:
-        df['ph_corrected'] = pd.NA
-        return df
-    
-    # Create working copy to avoid modifying original data
-    df_work = df.copy()
-    
-    # Calculate corrected pH using filled values, but only where vrse, temp, and salinity are available
-    mask = df_work['vrse'].isna() | df_work['temp'].isna() | df_work['salinity'].isna()
-    
+def add_corrected_ph(df: pl.DataFrame, ph_k0: float, ph_k2: float) -> pl.DataFrame:
+    """Add corrected pH column to Polars DataFrame using the vectorized isfetphcalc.calc_ph."""
+    required_cols = {'temperature', 'salinity', 'vrse'}
+    if not required_cols.issubset(df.columns):
+        return df.with_columns(pl.lit(None, dtype=pl.Float64).alias('ph_corrected'))
+
+    # Create a mask for rows with valid data
+    mask = (
+        pl.col('vrse').is_not_null() &
+        pl.col('temperature').is_not_null() &
+        pl.col('salinity').is_not_null()
+    )
+
+    # Filter the DataFrame to only include rows that can be processed
+    valid_df = df.filter(mask)
+
+    if valid_df.is_empty():
+        return df.with_columns(pl.lit(None, dtype=pl.Float64).alias('ph_corrected'))
+
+    # Convert Polars Series to NumPy arrays for the vectorized calculation
+    vrse_np = valid_df['vrse'].to_numpy()
+    temp_np = valid_df['temperature'].to_numpy()
+    salt_np = valid_df['salinity'].to_numpy()
+
     try:
-        ph_free, ph_total = calc_ph(
-            Vrs=df_work['vrse'],
-            Press=0,
-            Temp=df_work['temp'],
-            Salt=df_work['salinity'],
+        # Call the vectorized function from the library
+        _, ph_total_np = calc_ph(
+            Vrs=vrse_np,
+            Press=0,  # Assuming pressure is 0 as in the original row-wise implementation
+            Temp=temp_np,
+            Salt=salt_np,
             k0=ph_k0,
             k2=ph_k2,
             Pcoefs=0
         )
-        df['ph_corrected'] = ph_total
+
+        # Create a new DataFrame with the original index and the calculated pH
+        ph_results = valid_df.select(pl.col('datetime_utc')).with_columns(
+            pl.Series(name='ph_corrected', values=ph_total_np)
+        )
+
+        # Join the results back to the original DataFrame
+        return df.join(ph_results, on='datetime_utc', how='left')
+
     except Exception as e:
-        logging.warning(f"Error calculating corrected pH: {e}")
-        df['ph_corrected'] = pd.NA
-    
-    # Set NaN for rows with missing vrse data
-    if mask.any():
-        df.loc[mask, 'ph_corrected'] = pd.NA
-    
-    return df
-
-def process_new_data(self) -> pd.DataFrame:
-    """
-    Process new raw data and return resampled results.
-    
-    This is the main method that:
-    2. Resamples and joins the data
-    3. Adds corrected pH
-    4. Adds moving averages
-    
-    Returns:
-        DataFrame with processed new data
-    """
-    # Resample and join
-    df = resample_and_join(raw_data)
-
-    if df.empty:
-        logging.info("No data after resampling")
-        return df
-    
-    # Add corrected pH
-    df = add_corrected_ph(df, ph_k0=0.0, ph_k2=0.0)  # Replace with actual calibration constants
-    
-    logging.info(f"Generated {len(df)} resampled records")
-    
-    return df
-    
+        logging.error(f"Error during vectorized pH calculation: {e}")
+        # In case of an error, return the original DataFrame with a null column
+        return df.with_columns(pl.lit(None, dtype=pl.Float64).alias('ph_corrected'))
