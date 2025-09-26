@@ -10,7 +10,7 @@ def _():
     import polars as pl
     import altair as alt
     alt.data_transformers.enable("vegafusion")
-    return alt, pl
+    return alt, mo, pl
 
 
 @app.cell
@@ -55,7 +55,6 @@ def _(filtered, pl):
     ).agg([
         pl.all().exclude("datetime_utc").mean()
     ])
-
     return (resampled,)
 
 
@@ -80,11 +79,17 @@ def _(alt, resampled):
 
 
 @app.cell
-def _(alt, resampled):
-    alt.Chart(resampled).mark_line().encode(
+def _(alt, uf_res):
+    alt.Chart(uf_res).mark_line().encode(
         x="datetime_utc",
         y=alt.Y(f"rho_ppb:Q", title="Rhodamine [ppb]", scale=alt.Scale(zero=False)),
     ).interactive()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""Small spikes do not show in 50 ppb bucket test (2025-07-29 to 2025-07-31). I suspect these are small air bubbles in the underway system. Also need to investigate whether dips and humps correlate with flow issues. Value definitely spikes when flow interrupted for ph sensor changes.""")
     return
 
 
@@ -94,6 +99,31 @@ def _(alt, uf_res):
         x="datetime_utc",
         y=alt.Y(f"temperature:Q", title="Temperature [C]", scale=alt.Scale(zero=False)),
     ).interactive()
+    return
+
+
+@app.cell
+def _(alt, uf_res):
+    alt.Chart(uf_res).mark_line().encode(
+        x="datetime_utc",
+        y=alt.Y(f"salinity:Q", title="Salinity [PSU]", scale=alt.Scale(zero=False)),
+    ).interactive()
+    return
+
+
+@app.cell
+def _(alt, pl, uf_res):
+    uf_res_sal = uf_res.filter(pl.col("salinity") > 30)
+    alt.Chart(uf_res_sal).mark_line().encode(
+        x="datetime_utc",
+        y=alt.Y(f"salinity:Q", title="Salinity [PSU]", scale=alt.Scale(zero=False)),
+    ).interactive()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""Temp is also spiky/noisy. Not sure what's going on here.""")
     return
 
 
