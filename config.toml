@@ -1,23 +1,10 @@
 
 [paths]
-#db_path= "C:/Users/CSL 2/Documents/LOCNESS_data/database/locness.db"
 db_path = "/Users/brett/Documents/LOC-02/locness_post_res.db"
-#parquet_path = "G:/Shared drives/locness/synthetic_data/locness.parquet"
 parquet_path = "loc02_uw_qc.parquet"
-#parquet_path = "/Users/brett/Library/CloudStorage/GoogleDrive-blongworth@whoi.edu/Shared drives/locness/synthetic_data/locness.parquet"
-# add csv_path to write summary csv
 csv_path = "loc02_uw_qc.csv"
-#csv_path  = "G:/Shared drives/locness/ship_data/locness.csv"
-#log_path = "C:/Users/CSL 2/Documents/LOCNESS_data/logs/datamanager.log"
-log_path = "/Users/brett/Projects/locness/locness-datamanager/data/datamanager.log"
-dynamodb_table = "locness-underway-summary"
-dynamodb_region = "us-east-1"  # AWS region for DynamoDB (defaults to us-east-1)
 
-[resample-db]
-db_poll_interval = 10 # raw data polling interval in seconds
-db_res_int = "2s" # resampling interval in time units, e.g., "2s" for 2 seconds
-ph_ma_window = 120  # window in seconds for ph moving average
-ph_freq = 0.5  # frequency in Hz for ph moving average
+[calibration]
 # pH calibration coefficients
 # mFET005 SB10 (old, used during LOC-02)
 # ph_k0 = -1.39469
@@ -27,17 +14,5 @@ ph_freq = 0.5  # frequency in Hz for ph moving average
 ph_k0 = -1.3944286
 ph_k2 = -0.0010700
 
-[resample-output]
-output_poll_interval = 60  # resampled output polling interval in seconds
-output_res_int = "60s"  # resampling interval (time bucket size) in time units, e.g., "2s" for 2 seconds
-partition_hours = 6  # hours to partition the data for writing
-
-[db-backup]
-backup_interval = 6  # database backup interval in hours
-backup_path = "G:/Shared drives/locness/ship_data/db_backups"  # path to backup the database
-
-[synthetic_data]
-time = 60 # time in seconds of synthetic data to generate
-num = 30 # number of samples to generate
-freq = 0.5 # frequency in Hz for the generated data
-continuous = true # whether to generate continuous data or not
+[resample]
+resample_interval = "2s"

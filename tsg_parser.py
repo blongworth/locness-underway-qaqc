@@ -215,7 +215,7 @@ def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str =
         left_on=time_col,
         right_on=time_col,
         strategy="backward",
-        tolerance=timedelta(seconds=2.5)
+        tolerance=timedelta(seconds=4)
     )
     # Add source column based on whether primary data is null
     source_expr = pl.when(pl.col(value_cols[0]).is_null()).then(pl.lit("ship")).otherwise(pl.lit("uw"))
@@ -241,12 +241,15 @@ def fill_tsg(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap
     print(uw_df.columns)
     ship_df = read_tsg(tsg_file)
     ship_df = ship_df.select([
-        pl.col("ts").alias("datetime_utc"),
+        pl.col("ts").cast(pl.Datetime).alias("datetime_utc"),
         pl.col("t1").alias("temperature"),
         pl.col("c1").alias("cond"),
         pl.col("s").alias("salinity")
     ])
 
+    print(uw_df.head())
+    print(uw_df.describe())
+    print(ship_df.head())
     print(ship_df.describe())
 
     filled_df = fill_missing(uw_df, ship_df)

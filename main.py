@@ -419,7 +419,7 @@ def combine_data(
         "rho": rho_df.select(["datetime_utc", "rho_ppb"]),
     }
     
-    resample_interval = config["resample-db"].get("db_res_int", "2s")
+    resample_interval = config["resample"].get("resample_interval")
     return resample_polars_dfs(dfs, interval=resample_interval)
 
 @task
@@ -433,8 +433,8 @@ def add_ph_corrections(df: pl.DataFrame, config: dict) -> pl.DataFrame:
     Returns:
         pl.DataFrame: DataFrame with corrected pH values
     """
-    ph_k0 = config["resample-db"].get("ph_k0")
-    ph_k2 = config["resample-db"].get("ph_k2")
+    ph_k0 = config["calibration"].get("ph_k0")
+    ph_k2 = config["calibration"].get("ph_k2")
     return add_corrected_ph(df, ph_k0=ph_k0, ph_k2=ph_k2)
 
 @task
@@ -467,7 +467,7 @@ def save_outputs(df: pl.DataFrame, config: dict) -> None:
 def main():
     """Main Prefect flow for processing underway data."""
     # Load configuration
-    config = load_config()
+    config = load_config(config_path="config.toml")
     
     # Process all data sources in parallel
     gps_df = process_gps()
