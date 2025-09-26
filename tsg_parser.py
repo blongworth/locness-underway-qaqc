@@ -201,6 +201,32 @@ def read_tsg_table_to_polars(sqlite_path, table_name="tsg"):
     return df
 
 
+def resample_to_regular_timeseries(df: pl.DataFrame, time_col: str = "datetime_utc", interval_s: int = 2) -> pl.DataFrame:
+    # Ensure the time column is in datetime format
+    df = df.with_columns(pl.col(time_col).cast(pl.Datetime("us")))
+    start = df[time_col].min()
+    end = df[time_col].max()
+    # Generate regular timeseries
+    times = pl.datetime_range(
+        start=start,
+        end=end,
+        interval=timedelta(seconds=interval_s),
+        eager=True
+    )
+    # Create regular timeseries dataframe
+    regular_df = pl.DataFrame({time_col: times})
+    regular_df = regular_df.with_columns(pl.col(time_col).cast(pl.Datetime("us")))
+    
+    # Join with original data, keeping only exact matches
+    result = regular_df.join_asof(
+        df,
+        left_on=time_col,
+        right_on=time_col,
+        strategy="backward",
+        tolerance=timedelta(seconds=1.5)
+    )
+    return result
+
 def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str = "datetime_utc", value_cols: list = None) -> pl.DataFrame:
     if value_cols is None:
         value_cols = [col for col in primary.columns if col != time_col]
@@ -215,8 +241,12 @@ def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str =
         left_on=time_col,
         right_on=time_col,
         strategy="backward",
-        tolerance=timedelta(seconds=4)
+        tolerance=timedelta(seconds=2.5)
     )
+    
+    print(joined.head())
+    print(joined.describe())
+    
     # Add source column based on whether primary data is null
     source_expr = pl.when(pl.col(value_cols[0]).is_null()).then(pl.lit("ship")).otherwise(pl.lit("uw"))
     joined = joined.with_columns(source_expr.alias("source"))
@@ -231,14 +261,17 @@ def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str =
     return joined
 
 
-def fill_tsg(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap", output_path="data/filled_tsg.parquet"):
+def main(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap", output_path="data/filled_tsg.parquet"):
     uw_df = read_tsg_table_to_polars(db_path, table_name="tsg").select([
         pl.col("datetime_utc"),
         pl.col("temp").alias("temperature"),
         pl.col("cond"),
         pl.col("salinity")
     ])
-    print(uw_df.columns)
+    
+    
+    uw_regular = resample_to_regular_timeseries(uw_df)
+
     ship_df = read_tsg(tsg_file)
     ship_df = ship_df.select([
         pl.col("ts").cast(pl.Datetime).alias("datetime_utc"),
@@ -247,12 +280,12 @@ def fill_tsg(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap
         pl.col("s").alias("salinity")
     ])
 
-    print(uw_df.head())
-    print(uw_df.describe())
+    print(uw_regular.head())
+    print(uw_regular.describe())
     print(ship_df.head())
     print(ship_df.describe())
 
-    filled_df = fill_missing(uw_df, ship_df)
+    filled_df = fill_missing(uw_regular, ship_df)
 
     if filled_df.height > 0:
         # Get first and last times
@@ -274,5 +307,5 @@ def fill_tsg(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap
     return filled_df
     
 if __name__ == '__main__':
-    fill_tsg()
+    main()
         

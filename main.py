@@ -9,19 +9,20 @@ Dependencies:
     - tomli: Configuration management
 """
 
-import polars as pl
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 import tomli
 import logging
 from prefect import task, flow
-from prefect.tasks import task_input_hash
-from datetime import timedelta
 from patch_gps import main as patch_gps
-from tsg_parser import fill_tsg
-from resampler import resample_and_join, resample_polars_dfs, add_corrected_ph
+from tsg_parser import main as patch_tsg
+from resampler import resample_polars_dfs, add_corrected_ph
 from loc_02_apply_ph_qc import read_ph_flags, apply_ph_flags
 import sqlite3
+import polars as pl
+
+# Prevent truncation of polars output
+pl.Config.set_tbl_cols(-1)
 
 @task
 def load_config(config_path: str = "config.toml") -> dict:
@@ -191,9 +192,9 @@ def process_tsg(config: dict) -> pl.DataFrame:
     
     # if not Path(tsg_file).exists():
     #     raise FileNotFoundError(f"TSG file not found: {tsg_file}")
-            
-    tsg_df = fill_tsg()
-    
+
+    tsg_df = patch_tsg()
+
     if tsg_df is None or len(tsg_df) == 0:
         raise ValueError("No valid TSG data found")
     
