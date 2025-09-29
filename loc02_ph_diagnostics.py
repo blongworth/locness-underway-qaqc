@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.15.3"
+__generated_with = "0.15.5"
 app = marimo.App(width="medium")
 
 
@@ -53,7 +53,7 @@ def _(pl):
                 agg_exprs.append(pl.col(col).max())
             else:
                 agg_exprs.append(pl.col(col).first().alias(col + "_first"))
-    
+
         # Resample to 1-minute intervals
         df_res = df.group_by_dynamic(
             index_column="datetime_utc",
@@ -241,9 +241,9 @@ def _(alt, dfr, ph_y_var, pl):
 
 
 @app.cell
-def _():
+def _(df_flagged):
     # write the flagged data
-
+    df_flagged.write_parquet("data/loc02_ph_flagged.parquet")
     return
 
 

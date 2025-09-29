@@ -25,7 +25,9 @@ def _(df, pl):
     # Resample to 10-second frequency, taking the mean of all value columns
     filtered = (
         df
-        .filter(pl.col("ph_flag") == "2")
+        .filter(pl.col("ph_flag") == 2,
+                    pl.col("salinity_flag") == 2,
+                    pl.col("temperature_flag") == 2,)
         .drop("ph_flag")
     )
     filtered
@@ -65,6 +67,24 @@ def _(alt, resampled):
         y="latitude",
         color="ph_corrected",
         tooltip=["datetime_utc", "longitude", "latitude"]
+    ).interactive()
+    return
+
+
+@app.cell
+def _(alt, uf_res):
+    alt.Chart(uf_res).mark_line().encode(
+        x="datetime_utc",
+        y=alt.Y(f"longitude:Q", title="longitude", scale=alt.Scale(zero=False)),
+    ).interactive()
+    return
+
+
+@app.cell
+def _(alt, uf_res):
+    alt.Chart(uf_res).mark_line().encode(
+        x="datetime_utc",
+        y=alt.Y(f"latitude:Q", title="latitude", scale=alt.Scale(zero=False)),
     ).interactive()
     return
 

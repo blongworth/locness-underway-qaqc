@@ -9,6 +9,10 @@ Dependencies:
     - tomli: Configuration management
 """
 
+# TODO: store each underway product with qc flags
+# TODO: qc and source flags
+# TODO: qc flag for each parameter in final output
+
 from pathlib import Path
 from typing import Optional
 import tomli
@@ -390,6 +394,11 @@ def read_rho_table_to_polars(db_path: str) -> pl.DataFrame:
     # Validate data
     if not validate_rho_data(df):
         raise ValueError("Rhodamine data validation failed")
+    
+    # Add a default rho_flag
+    df = df.with_columns(
+        pl.lit(1, dtype=pl.Int8).alias("rho_flag")
+    )
     return df
 
 @task
@@ -415,9 +424,9 @@ def combine_data(
     # Select needed columns and combine dfs to dictionary
     dfs = {
         "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]),
-        "tsg": tsg_df.select(["datetime_utc", "temperature", "salinity"]),
+        "tsg": tsg_df.select(["datetime_utc", "temperature", "temperature_flag", "salinity", "salinity_flag"]),
         "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
-        "rho": rho_df.select(["datetime_utc", "rho_ppb"]),
+        "rho": rho_df.select(["datetime_utc", "rho_ppb", "rho_flag"]),
     }
     
     resample_interval = config["resample"].get("resample_interval")
@@ -462,7 +471,7 @@ def save_outputs(df: pl.DataFrame, config: dict) -> None:
         df.write_parquet(config["paths"]["parquet_path"])
     
     if "csv_path" in config["paths"]:
-        df.write_csv(config["paths"]["csv_path"])
+        df.write_csv(config["paths"]["csv_path"], datetime_format="%Y-%m-%dT%H:%M:%S")
 
 @flow(name="LOCNESS Underway Data Processing")
 def main():

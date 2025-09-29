@@ -260,7 +260,25 @@ def fill_missing(primary: pl.DataFrame, secondary: pl.DataFrame, time_col: str =
     joined = joined.select([time_col] + value_cols + ["source"])
     return joined
 
+def flag_tsg(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Adds flag columns to the TSG DataFrame based on data quality checks.
 
+    Args:
+        df: Input polars DataFrame with 'temperature' and 'salinity' columns.
+
+    Returns:
+        polars.DataFrame with added 'temperature_flag' and 'salinity_flag' columns.
+    """
+    df = df.with_columns([
+        pl.lit(2, dtype=pl.Int8).alias("temperature_flag"),
+        pl.when(pl.col("salinity") < 30)
+          .then(pl.lit(4, dtype=pl.Int8))
+          .otherwise(pl.lit(2, dtype=pl.Int8))
+          .alias("salinity_flag")
+    ])
+    return df
+    
 def main(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap", output_path="data/filled_tsg.parquet"):
     uw_df = read_tsg_table_to_polars(db_path, table_name="tsg").select([
         pl.col("datetime_utc"),
@@ -303,6 +321,15 @@ def main(db_path="data/locness.db",tsg_file="data/TSG_2025_08_12_Subhas1.cap", o
     else:
         print("DataFrame is empty")
     
+    # Flag the data
+    filled_df = flag_tsg(filled_df)
+
+    # Print flag counts
+    print("\nTemperature Flag Counts:")
+    print(filled_df.group_by("temperature_flag").count())
+
+    print("\nSalinity Flag Counts:")
+    print(filled_df.group_by("salinity_flag").count())
     filled_df.write_parquet(output_path)
     return filled_df
     

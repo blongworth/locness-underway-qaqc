@@ -27,7 +27,8 @@ def apply_ph_flags(df, ph_flags):
         # Set ph_flag to 4 where mask is True
         df_flagged = df_flagged.with_columns(
             pl.when(mask).then(4).otherwise(pl.col("ph_flag")).alias("ph_flag")
-        ).with_columns(
-        pl.col("ph_flag").cast(pl.String)
         )
+    
+    df_flagged = df_flagged.with_columns(pl.col("ph_flag").cast(pl.Int8))
+    
     return df_flagged
