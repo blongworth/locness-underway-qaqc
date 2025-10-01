@@ -448,6 +448,44 @@ def add_ph_corrections(df: pl.DataFrame, config: dict) -> pl.DataFrame:
     return add_corrected_ph(df, ph_k0=ph_k0, ph_k2=ph_k2)
 
 @task
+def add_underway_flow_flags(df: pl.DataFrame, flow_file: str) -> pl.DataFrame:
+    """Add underway flow flags to the dataset based on shutdown periods.
+    
+    Args:
+        df: DataFrame with datetime_utc column
+        flow_file: Path to CSV file with shutdown periods
+        
+    Returns:
+        pl.DataFrame: DataFrame with added 'underway_flow_flag' column
+    """
+    if not Path(flow_file).exists():
+        raise FileNotFoundError(f"Underway flow flag file not found: {flow_file}")
+    
+    flow_flags = pl.read_csv(flow_file).with_columns([
+        pl.col("start_time").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S"),
+        pl.col("end_time").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S"),
+    ])
+    
+    # Iterate over each shutdown period and update flags
+    for row in flow_flags.iter_rows(named=True):
+        start_time = row["start_time"]
+        end_time = row["end_time"]
+        
+        # Create a mask for the time range of the shutdown
+        mask = (df["datetime_utc"] > start_time) & (df["datetime_utc"] < end_time)
+        
+        # Set flags to 4 (bad data) for the shutdown period
+        df = df.with_columns(
+            pl.when(mask).then(4).otherwise(pl.col("temperature_flag")).alias("temperature_flag"),
+            pl.when(mask).then(4).otherwise(pl.col("salinity_flag")).alias("salinity_flag"),
+            pl.when(mask).then(4).otherwise(pl.col("ph_flag")).alias("ph_flag"),
+            pl.when(mask).then(4).otherwise(pl.col("rho_flag")).alias("rho_flag"),
+        )
+    
+    return df
+
+
+@task
 def save_outputs(df: pl.DataFrame, config: dict) -> None:
     """Save the processed data to configured output formats.
     
@@ -490,6 +528,9 @@ def main():
     
     # Add pH corrections
     corrected_df = add_ph_corrections(combined_df, config)
+    
+    # Add underway flow flags
+    corrected_df = add_underway_flow_flags(corrected_df, "loc02_uw_shutdowns.csv")
     
     # Save outputs
     save_outputs(corrected_df, config)

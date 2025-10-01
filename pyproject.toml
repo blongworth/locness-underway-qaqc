@@ -19,6 +19,7 @@ dependencies = [
     "vl-convert-python>=1.8.0",
     "isfetphcalc",
     "pyarrow>=21.0.0",
+    "google-genai>=1.39.1",
 ]
 
 [tool.uv.sources]

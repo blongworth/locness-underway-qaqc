@@ -25,10 +25,10 @@ def _(df, pl):
     # Resample to 10-second frequency, taking the mean of all value columns
     filtered = (
         df
-        .filter(pl.col("ph_flag") == 2,
-                    pl.col("salinity_flag") == 2,
-                    pl.col("temperature_flag") == 2,)
-        .drop("ph_flag")
+            .filter(~pl.col("ph_flag").is_in([3, 4]),
+                    ~pl.col("salinity_flag").is_in([3, 4]),
+                    ~pl.col("rho_flag").is_in([3, 4]),
+                    ~pl.col("temperature_flag").is_in([3, 4]))
     )
     filtered
     return (filtered,)
@@ -99,8 +99,8 @@ def _(alt, resampled):
 
 
 @app.cell
-def _(alt, uf_res):
-    alt.Chart(uf_res).mark_line().encode(
+def _(alt, resampled):
+    alt.Chart(resampled).mark_line().encode(
         x="datetime_utc",
         y=alt.Y(f"rho_ppb:Q", title="Rhodamine [ppb]", scale=alt.Scale(zero=False)),
     ).interactive()
@@ -114,8 +114,8 @@ def _(mo):
 
 
 @app.cell
-def _(alt, uf_res):
-    alt.Chart(uf_res).mark_line().encode(
+def _(alt, resampled):
+    alt.Chart(resampled).mark_line().encode(
         x="datetime_utc",
         y=alt.Y(f"temperature:Q", title="Temperature [C]", scale=alt.Scale(zero=False)),
     ).interactive()
@@ -123,8 +123,8 @@ def _(alt, uf_res):
 
 
 @app.cell
-def _(alt, uf_res):
-    alt.Chart(uf_res).mark_line().encode(
+def _(alt, resampled):
+    alt.Chart(resampled).mark_line().encode(
         x="datetime_utc",
         y=alt.Y(f"salinity:Q", title="Salinity [PSU]", scale=alt.Scale(zero=False)),
     ).interactive()
@@ -144,6 +144,45 @@ def _(alt, pl, uf_res):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Temp is also spiky/noisy. Not sure what's going on here.""")
+    return
+
+
+@app.cell
+def _(alt, df, pl):
+    _df = df.filter((pl.col('datetime_utc') > pl.datetime(2025, 8, 17, 9)) & (pl.col('datetime_utc') < pl.datetime(2025, 8, 17, 10)))
+    alt.Chart(_df).mark_point().encode(
+        x="datetime_utc",
+        y="salinity",
+        tooltip=alt.Tooltip('datetime_utc:T', title='Date and Time', format='%Y-%m-%d %H:%M:%S'),
+    ).interactive()
+    return
+
+
+@app.cell
+def _(alt, df, pl):
+    _df = df.filter(pl.col('salinity') < 30)
+    alt.Chart(_df).mark_point().encode(
+        x="datetime_utc",
+        y="salinity",
+        tooltip=alt.Tooltip('datetime_utc:T', title='Date and Time', format='%Y-%m-%d %H:%M:%S'),
+    ).interactive()
+    return
+
+
+@app.cell
+def _(alt, df, pl):
+    _df = df.filter((pl.col('datetime_utc') > pl.datetime(2025, 8, 17, 9)) & (pl.col('datetime_utc') < pl.datetime(2025, 8, 17, 10)))
+    alt.Chart(_df).mark_point().encode(
+        x="datetime_utc",
+        y="rho_ppb",
+        color='rho_flag',
+        tooltip=alt.Tooltip('datetime_utc:T', title='Date and Time', format='%Y-%m-%d %H:%M:%S'),
+    ).interactive()
+    return
+
+
+@app.cell
+def _():
     return
 
 
