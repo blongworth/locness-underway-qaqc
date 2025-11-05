@@ -1,8 +1,9 @@
 
 [paths]
 db_path = "/Users/brett/Documents/LOC-02/locness_post_res.db"
-parquet_path = "loc02_uw_qc.parquet"
-csv_path = "loc02_uw_qc.csv"
+netcdf_path = "output/loc02_uw_qc.nc"
+parquet_path = "output/loc02_uw_qc.parquet"
+csv_path = "output/loc02_uw_qc.csv"
 
 [calibration]
 # pH calibration coefficients

@@ -20,6 +20,8 @@ dependencies = [
     "isfetphcalc",
     "pyarrow>=21.0.0",
     "google-genai>=1.39.1",
+    "xarray>=2025.10.1",
+    "netcdf4>=1.7.3",
 ]
 
 [tool.uv.sources]

@@ -15,7 +15,7 @@ def _():
 
 @app.cell
 def _(pl):
-    df = pl.read_parquet("loc02_uw_qc.parquet")
+    df = pl.read_parquet("output/loc02_uw_qc.parquet")
     df
     return (df,)
 
@@ -107,6 +107,15 @@ def _(alt, resampled):
     return
 
 
+@app.cell
+def _(alt, resampled):
+    alt.Chart(resampled).mark_line().encode(
+        x="datetime_utc",
+        y=alt.Y(f"oxygen_umol_kg:Q", title="Oxygen [umol/kg]", scale=alt.Scale(zero=False)),
+    ).interactive()
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""Small spikes do not show in 50 ppb bucket test (2025-07-29 to 2025-07-31). I suspect these are small air bubbles in the underway system. Also need to investigate whether dips and humps correlate with flow issues. Value definitely spikes when flow interrupted for ph sensor changes.""")
@@ -171,18 +180,57 @@ def _(alt, df, pl):
 
 @app.cell
 def _(alt, df, pl):
-    _df = df.filter((pl.col('datetime_utc') > pl.datetime(2025, 8, 17, 9)) & (pl.col('datetime_utc') < pl.datetime(2025, 8, 17, 10)))
-    alt.Chart(_df).mark_point().encode(
-        x="datetime_utc",
-        y="rho_ppb",
-        color='rho_flag',
-        tooltip=alt.Tooltip('datetime_utc:T', title='Date and Time', format='%Y-%m-%d %H:%M:%S'),
-    ).interactive()
+    _df = df.filter(
+        (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 12)) &
+        (pl.col('datetime_utc') < pl.datetime(2025, 8, 14))
+    )
+    pdf = _df.to_pandas()
+
+    base = alt.Chart(pdf).encode(
+        x=alt.X("datetime_utc:T", title="Datetime (UTC)")
+    )
+
+    rho_line = base.mark_line(color="#1f77b4").encode(
+        y=alt.Y("rho_ppb:Q", title="rho_ppb", axis=alt.Axis(titleColor="#1f77b4")),
+        tooltip=[
+            alt.Tooltip('datetime_utc:T', title='Date and Time', format='%Y-%m-%d %H:%M:%S'),
+            alt.Tooltip('rho_ppb:Q', title='rho_ppb'),
+        ],
+    )
+
+    ph_line = base.mark_line(color="#ff7f0e").encode(
+        y=alt.Y("ph_corrected:Q", title="pH (calibrated)", axis=alt.Axis(titleColor="#ff7f0e")),
+        tooltip=[
+            alt.Tooltip('datetime_utc:T', title='Date and Time', format='%Y-%m-%d %H:%M:%S'),
+            alt.Tooltip('ph_corrected:Q', title='pH (calibrated)'),
+        ],
+    )
+
+    _chart = alt.layer(rho_line, ph_line).resolve_scale(
+        y='independent'
+    ).properties(width=700, height=350).interactive()
+
+    _chart
     return
 
 
 @app.cell
-def _():
+def _(pl):
+    rho_df = pl.read_parquet("output/loc02_rho_data.parquet")
+    rho_df.filter(
+         (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 17, 1)) &
+        (pl.col('datetime_utc') < pl.datetime(2025, 8, 13, 17, 2))
+    )
+    return
+
+
+@app.cell
+def _(pl):
+    ph_df = pl.read_parquet("output/loc02_ph_data.parquet")
+    ph_df.filter(
+         (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 17, 1)) &
+        (pl.col('datetime_utc') < pl.datetime(2025, 8, 13, 17, 2))
+    )
     return
 
 

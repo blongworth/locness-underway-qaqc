@@ -24,6 +24,8 @@ from resampler import resample_polars_dfs, add_corrected_ph
 from loc_02_apply_ph_qc import read_ph_flags, apply_ph_flags
 import sqlite3
 import polars as pl
+import xarray as xr
+import pandas as pd
 
 # Prevent truncation of polars output
 pl.Config.set_tbl_cols(-1)
@@ -397,9 +399,119 @@ def read_rho_table_to_polars(db_path: str) -> pl.DataFrame:
     
     # Add a default rho_flag
     df = df.with_columns(
-        pl.lit(1, dtype=pl.Int8).alias("rho_flag")
+        pl.lit(2, dtype=pl.Int8).alias("rho_flag")
     )
     return df
+
+def validate_oxygen_data(df: pl.DataFrame) -> bool:
+    """Validate oxygen sensor data format and values.
+    
+    Performs checks on oxygen sensor data to ensure it meets quality requirements:
+    - Has all required columns (datetime_utc, oxygen_umol_kg)
+    - Contains valid numeric data types
+    - Values are within reasonable dissolved oxygen ranges
+    
+    Args:
+        df: DataFrame to validate, should contain dissolved oxygen data
+        
+    Returns:
+        bool: True if data meets all validation criteria, False otherwise
+        
+    Note:
+        - Oxygen range: 200-300 umol/kg (typical dissolved oxygen range in seawater)
+        - Logs warnings for out-of-range values but only returns False for critical errors
+    """
+    # Check required columns
+    required_cols = ["datetime_utc", "oxygen_umol_kg"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        logging.error(f"Missing required oxygen columns: {missing_cols}")
+        return False
+        
+    # Check data types
+    try:
+        df = df.with_columns([
+            pl.col("oxygen_umol_kg").cast(pl.Float64)
+        ])
+    except Exception as e:
+        logging.error(f"Invalid data types in oxygen data: {str(e)}")
+        return False
+
+    # Check value ranges (typical dissolved oxygen concentrations in umol/kg)
+    oxygen_range = (200, 300)  # Reasonable dissolved oxygen range in seawater
+
+    oxygen_invalid = df.filter(
+        (pl.col("oxygen_umol_kg") < oxygen_range[0]) | 
+        (pl.col("oxygen_umol_kg") > oxygen_range[1])
+    )
+    if len(oxygen_invalid) > 0:
+        logging.warning(f"Found {len(oxygen_invalid)} oxygen values outside range {oxygen_range}")
+    
+    return True
+
+@task
+def read_oxygen(csv_path: str) -> pl.DataFrame:
+    """Read oxygen data from CSV file as a Prefect task.
+    
+    Args:
+        csv_path: Path to CSV file containing oxygen measurements
+        
+    Returns:
+        pl.DataFrame: DataFrame with columns:
+            - datetime_utc: Timestamp of measurement
+            - oxygen_mg_l: Dissolved oxygen concentration in mg/L
+            - oxygen_flag: Quality flag for oxygen data
+            
+    Raises:
+        FileNotFoundError: If CSV file not found
+        ValueError: If data validation fails
+    """
+    if not Path(csv_path).exists():
+        raise FileNotFoundError(f"Oxygen CSV file not found: {csv_path}")
+    
+    # Read CSV file
+    df = pl.read_csv(csv_path)
+    # Rename datetime column to datetime_utc if it exists
+    if "datetime" in df.columns and "datetime_utc" not in df.columns:
+        df = df.rename({"datetime": "datetime_utc"})
+        
+    # Convert datetime column if needed (adjust format as necessary)
+    if "datetime_utc" in df.columns:
+        df = df.with_columns(
+            pl.col("datetime_utc")
+            .str.strptime(pl.Datetime("us"), "%Y-%m-%d %H:%M:%S.%f")
+            .alias("datetime_utc")
+        )
+    
+    # Print first 10 rows
+    print("\nFirst 10 rows of oxygen data:")
+    print(df.head(10))
+
+    # Print dataframe schema and summary
+    print("\nDataframe Schema:")
+    print(df.schema)
+
+    print("\nDataframe Summary:")
+    print(df.describe())
+    
+    # Add a default oxygen_flag if not present
+    if "oxygen_flag" not in df.columns:
+        df = df.with_columns(
+            pl.lit(2, dtype=pl.Int8).alias("oxygen_flag")
+        )
+    
+    # keep only datetime_utc and O2_calc
+    df = df.select([
+        pl.col("datetime_utc"),
+        pl.col("O2_calc").alias("oxygen_umol_kg"),
+    ])
+
+    # Validate data
+    if not validate_oxygen_data(df):
+        raise ValueError("Oxygen data validation failed")
+    
+    return df
+
 
 @task
 def combine_data(
@@ -407,6 +519,7 @@ def combine_data(
     tsg_df: pl.DataFrame,
     ph_df: pl.DataFrame,
     rho_df: pl.DataFrame,
+    oxygen_df: pl.DataFrame,
     config: dict
 ) -> pl.DataFrame:
     """Combine all data sources into a single DataFrame.
@@ -416,6 +529,7 @@ def combine_data(
         tsg_df: TSG data
         ph_df: pH data
         rho_df: Rhodamine data
+        oxygen_df: Oxygen data
         config: Configuration dictionary
         
     Returns:
@@ -427,6 +541,7 @@ def combine_data(
         "tsg": tsg_df.select(["datetime_utc", "temperature", "temperature_flag", "salinity", "salinity_flag"]),
         "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
         "rho": rho_df.select(["datetime_utc", "rho_ppb", "rho_flag"]),
+        "oxygen": oxygen_df.select(["datetime_utc", "oxygen_umol_kg"]),         
     }
     
     resample_interval = config["resample"].get("resample_interval")
@@ -445,7 +560,14 @@ def add_ph_corrections(df: pl.DataFrame, config: dict) -> pl.DataFrame:
     """
     ph_k0 = config["calibration"].get("ph_k0")
     ph_k2 = config["calibration"].get("ph_k2")
-    return add_corrected_ph(df, ph_k0=ph_k0, ph_k2=ph_k2)
+    df_cor =  add_corrected_ph(df, ph_k0=ph_k0, ph_k2=ph_k2)
+    df_cor = df_cor.with_columns(
+        pl.when(pl.col("ph_corrected").is_nan())
+        .then(None)
+        .otherwise(pl.col("ph_flag"))
+        .alias("ph_flag")
+    )
+    return df_cor
 
 @task
 def add_underway_flow_flags(df: pl.DataFrame, flow_file: str) -> pl.DataFrame:
@@ -482,6 +604,24 @@ def add_underway_flow_flags(df: pl.DataFrame, flow_file: str) -> pl.DataFrame:
             pl.when(mask).then(4).otherwise(pl.col("rho_flag")).alias("rho_flag"),
         )
     
+    df = df.with_columns(
+        pl.when(pl.col("ph_corrected").is_null())
+        .then(None)
+        .otherwise(pl.col("ph_flag"))
+        .alias("ph_flag"),
+        pl.when(pl.col("salinity").is_null())
+        .then(None)
+        .otherwise(pl.col("salinity_flag"))
+        .alias("salinity_flag"),
+        pl.when(pl.col("temperature").is_null())
+        .then(None)
+        .otherwise(pl.col("temperature_flag"))
+        .alias("temperature_flag"),
+        pl.when(pl.col("rho_ppb").is_null())
+        .then(None)
+        .otherwise(pl.col("rho_flag"))
+        .alias("rho_flag"),
+    )
     return df
 
 
@@ -505,6 +645,23 @@ def save_outputs(df: pl.DataFrame, config: dict) -> None:
     print("\nDataframe Summary:")
     print(df.describe())
 
+    if "netcdf_path" in config["paths"]:
+
+        # Convert Polars DataFrame to pandas
+        pdf = df.to_pandas()
+
+        # If there is a datetime_utc column, set it as the time index required by xarray
+        if "datetime_utc" in pdf.columns:
+            pdf["datetime_utc"] = pd.to_datetime(pdf["datetime_utc"])
+            pdf = pdf.set_index("datetime_utc")
+            pdf.index.name = "time"
+
+        # Create xarray Dataset from the pandas DataFrame
+        ds = xr.Dataset.from_dataframe(pdf)
+
+        # write to netCDF
+        ds.to_netcdf(config["paths"]["netcdf_path"])
+
     if "parquet_path" in config["paths"]:
         df.write_parquet(config["paths"]["parquet_path"])
     
@@ -522,10 +679,11 @@ def main():
     tsg_df = process_tsg(config)
     ph_df = read_ph_and_flag(config["paths"]["db_path"], "loc02-ph-qc-flags.csv")
     rho_df = read_rho_table_to_polars(config["paths"]["db_path"])
+    oxygen_df = read_oxygen("data/loc02_do_optode_qc.csv")
     
     # Combine data
-    combined_df = combine_data(gps_df, tsg_df, ph_df, rho_df, config)
-    
+    combined_df = combine_data(gps_df, tsg_df, ph_df, rho_df, oxygen_df, config)
+
     # Add pH corrections
     corrected_df = add_ph_corrections(combined_df, config)
     
@@ -534,6 +692,11 @@ def main():
     
     # Save outputs
     save_outputs(corrected_df, config)
+
+    gps_df.write_parquet("output/loc02_gps_data.parquet")
+    tsg_df.write_parquet("output/loc02_tsg_data.parquet")
+    ph_df.write_parquet("output/loc02_ph_data.parquet")
+    rho_df.write_parquet("output/loc02_rho_data.parquet")
 
 if __name__ == "__main__":
     main()

@@ -67,7 +67,7 @@ def resample_polars_dfs(dfs: dict[str, pl.DataFrame], interval: str) -> pl.DataF
             df, 
             on='datetime_utc',
             strategy='backward',
-            tolerance='4s'
+            tolerance='2s'
         )
     
     return result
