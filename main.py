@@ -512,6 +512,80 @@ def read_oxygen(csv_path: str) -> pl.DataFrame:
     
     return df
 
+   
+@task
+def read_hydrofia(xlsx_path: str) -> pl.DataFrame:
+    """Read Hydrofia TA data from Excel file as a Prefect task.
+    
+    Args:
+        xlsx_path: Path to Excel file containing Hydrofia TA measurements
+        
+    Returns:
+        pl.DataFrame: DataFrame with columns:
+            - timestamp: Timestamp of measurement
+            - TA_corrected: Corrected total alkalinity
+            - Hydrofia_Flag: Quality flag for Hydrofia data
+            - TA_Discrete: Discrete TA measurements
+            - TA_Discrete_Flag: Quality flag for discrete TA
+            
+    Raises:
+        FileNotFoundError: If Excel file not found
+        ValueError: If data validation fails
+    """
+    if not Path(xlsx_path).exists():
+        raise FileNotFoundError(f"Hydrofia Excel file not found: {xlsx_path}")
+    
+    # Read Excel file
+    df = pl.read_excel(xlsx_path)
+
+    print(df.schema)
+
+    # Convert "NaN" string values to actual None/null
+    df = df.with_columns([
+        pl.col(c).replace("NaN", None) for c in df.columns if df[c].dtype == pl.Utf8
+    ])
+    
+    # Replace NaN float values with None/null
+    df = df.with_columns(
+        pl.col(pl.Float64).fill_nan(None)
+    )
+    
+    # Select required columns
+    required_cols = ["timestamp", "TA_corrected", "Hydrofia_Flag", "TA_Discrete", "TA_Discrete_Flag"]
+    df = df.select(required_cols)
+    df = df.rename({
+        "timestamp": "datetime_utc",
+        "TA_corrected": "ta_hydrofia",
+        "Hydrofia_Flag": "ta_hydrofia_flag",
+        "TA_Discrete": "ta_discrete",
+        "TA_Discrete_Flag": "ta_discrete_flag"
+    })
+    # Filter where ta_hydrofia_flag is 2, 3, or 4
+    df = df.filter(pl.col("ta_hydrofia_flag").is_in(["2", "3", "4"]))
+    df = df.with_columns([
+        pl.col("ta_hydrofia_flag").cast(pl.Int8),
+        pl.col("ta_discrete_flag").cast(pl.Int8)
+    ])
+    
+    # Convert timestamp to datetime if needed
+    if "datetime_utc" in df.columns:
+        df = df.with_columns(
+            pl.col("datetime_utc").cast(pl.Datetime("us"))
+        )
+    
+    # Print first 10 rows
+    print("\nFirst 10 rows of Hydrofia data:")
+    print(df.head(10))
+
+    # Print dataframe schema and summary
+    print("\nDataframe Schema:")
+    print(df.schema)
+
+    print("\nDataframe Summary:")
+    print(df.describe())
+    
+    return df
+
 
 @task
 def combine_data(
@@ -520,6 +594,7 @@ def combine_data(
     ph_df: pl.DataFrame,
     rho_df: pl.DataFrame,
     oxygen_df: pl.DataFrame,
+    hydrofia_df: pl.DataFrame,
     config: dict
 ) -> pl.DataFrame:
     """Combine all data sources into a single DataFrame.
@@ -530,6 +605,7 @@ def combine_data(
         ph_df: pH data
         rho_df: Rhodamine data
         oxygen_df: Oxygen data
+        hydrofia_df: Hydrofia data
         config: Configuration dictionary
         
     Returns:
@@ -542,10 +618,12 @@ def combine_data(
         "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
         "rho": rho_df.select(["datetime_utc", "rho_ppb", "rho_flag"]),
         "oxygen": oxygen_df.select(["datetime_utc", "oxygen_umol_kg"]),         
+        "hydrofia": hydrofia_df.select(["datetime_utc", "ta_hydrofia", "ta_hydrofia_flag", "ta_discrete", "ta_discrete_flag"]),
     }
     
     resample_interval = config["resample"].get("resample_interval")
     return resample_polars_dfs(dfs, interval=resample_interval)
+
 
 @task
 def add_ph_corrections(df: pl.DataFrame, config: dict) -> pl.DataFrame:
@@ -668,6 +746,7 @@ def save_outputs(df: pl.DataFrame, config: dict) -> None:
     if "csv_path" in config["paths"]:
         df.write_csv(config["paths"]["csv_path"], datetime_format="%Y-%m-%dT%H:%M:%S")
 
+
 @flow(name="LOCNESS Underway Data Processing")
 def main():
     """Main Prefect flow for processing underway data."""
@@ -680,9 +759,10 @@ def main():
     ph_df = read_ph_and_flag(config["paths"]["db_path"], "loc02-ph-qc-flags.csv")
     rho_df = read_rho_table_to_polars(config["paths"]["db_path"])
     oxygen_df = read_oxygen("data/loc02_do_optode_qc.csv")
+    hydrofia_df = read_hydrofia("data/LOC02_Hydrofia_Final_Flagged_103125.xlsx")
     
     # Combine data
-    combined_df = combine_data(gps_df, tsg_df, ph_df, rho_df, oxygen_df, config)
+    combined_df = combine_data(gps_df, tsg_df, ph_df, rho_df, oxygen_df, hydrofia_df, config)
 
     # Add pH corrections
     corrected_df = add_ph_corrections(combined_df, config)
