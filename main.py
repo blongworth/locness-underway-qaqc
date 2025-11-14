@@ -18,6 +18,7 @@ from typing import Optional
 import tomli
 import logging
 from prefect import task, flow
+from prefect.futures import wait
 from patch_gps import main as patch_gps
 from tsg_parser import main as patch_tsg
 from resampler import resample_polars_dfs, add_corrected_ph
@@ -747,6 +748,8 @@ def save_outputs(df: pl.DataFrame, config: dict) -> None:
         df.write_csv(config["paths"]["csv_path"], datetime_format="%Y-%m-%dT%H:%M:%S")
 
 
+### Prefect Flow Definition ###
+
 @flow(name="LOCNESS Underway Data Processing")
 def main():
     """Main Prefect flow for processing underway data."""
@@ -754,15 +757,21 @@ def main():
     config = load_config(config_path="config.toml")
     
     # Process all data sources in parallel
-    gps_df = process_gps()
-    tsg_df = process_tsg(config)
-    ph_df = read_ph_and_flag(config["paths"]["db_path"], "loc02-ph-qc-flags.csv")
-    rho_df = read_rho_table_to_polars(config["paths"]["db_path"])
-    oxygen_df = read_oxygen("data/loc02_do_optode_qc.csv")
-    hydrofia_df = read_hydrofia("data/LOC02_Hydrofia_Final_Flagged_103125.xlsx")
+    gps_df = process_gps.submit()
+    tsg_df = process_tsg.submit(config)
+    ph_df = read_ph_and_flag.submit(config["paths"]["db_path"], "loc02-ph-qc-flags.csv")
+    rho_df = read_rho_table_to_polars.submit(config["paths"]["db_path"])
+    oxygen_df = read_oxygen.submit("data/loc02_do_optode_qc.csv")
+    hydrofia_df = read_hydrofia.submit("data/LOC02_Hydrofia_Final_Flagged_103125.xlsx")
     
     # Combine data
-    combined_df = combine_data(gps_df, tsg_df, ph_df, rho_df, oxygen_df, hydrofia_df, config)
+    combined_df = combine_data(gps_df.result(),
+                               tsg_df.result(),
+                               ph_df.result(),
+                               rho_df.result(),
+                               oxygen_df.result(),
+                               hydrofia_df.result(),
+                               config)
 
     # Add pH corrections
     corrected_df = add_ph_corrections(combined_df, config)
@@ -773,10 +782,10 @@ def main():
     # Save outputs
     save_outputs(corrected_df, config)
 
-    gps_df.write_parquet("output/loc02_gps_data.parquet")
-    tsg_df.write_parquet("output/loc02_tsg_data.parquet")
-    ph_df.write_parquet("output/loc02_ph_data.parquet")
-    rho_df.write_parquet("output/loc02_rho_data.parquet")
+    gps_df.result().write_parquet("output/loc02_gps_data.parquet")
+    tsg_df.result().write_parquet("output/loc02_tsg_data.parquet")
+    ph_df.result().write_parquet("output/loc02_ph_data.parquet")
+    rho_df.result().write_parquet("output/loc02_rho_data.parquet")
 
 if __name__ == "__main__":
     main()
