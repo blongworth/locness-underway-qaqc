@@ -551,20 +551,31 @@ def read_hydrofia(xlsx_path: str) -> pl.DataFrame:
     )
     
     # Select required columns
-    required_cols = ["timestamp", "TA_corrected", "Hydrofia_Flag", "TA_Discrete", "TA_Discrete_Flag"]
+    required_cols = [
+        "timestamp",
+        "TA_corrected",
+        "Hydrofia_Flag",
+        "TA_Discrete",
+        "TA_Discrete_Flag",
+        "DIC_Discrete",
+        "DIC_Discrete_Flag"
+    ]
     df = df.select(required_cols)
     df = df.rename({
         "timestamp": "datetime_utc",
         "TA_corrected": "ta_hydrofia",
         "Hydrofia_Flag": "ta_hydrofia_flag",
         "TA_Discrete": "ta_discrete",
-        "TA_Discrete_Flag": "ta_discrete_flag"
+        "TA_Discrete_Flag": "ta_discrete_flag",
+        "DIC_Discrete": "dic_discrete",
+        "DIC_Discrete_Flag": "dic_discrete_flag"
     })
     # Filter where ta_hydrofia_flag is 2, 3, or 4
     df = df.filter(pl.col("ta_hydrofia_flag").is_in(["2", "3", "4"]))
     df = df.with_columns([
         pl.col("ta_hydrofia_flag").cast(pl.Int8),
-        pl.col("ta_discrete_flag").cast(pl.Int8)
+        pl.col("ta_discrete_flag").cast(pl.Int8),
+        pl.col("dic_discrete_flag").cast(pl.Int8)
     ])
     
     # Convert timestamp to datetime if needed
@@ -614,11 +625,29 @@ def combine_data(
     # Select needed columns and combine dfs to dictionary
     dfs = {
         "gps": gps_df.select(["datetime_utc", "latitude", "longitude"]),
-        "tsg": tsg_df.select(["datetime_utc", "temperature", "temperature_flag", "salinity", "salinity_flag"]),
+        "tsg": tsg_df.select(
+            [
+                "datetime_utc",
+                "temperature",
+                "temperature_flag",
+                "salinity",
+                "salinity_flag",
+            ]
+        ),
         "ph": ph_df.select(["datetime_utc", "vrse", "ph_flag"]),
         "rho": rho_df.select(["datetime_utc", "rho_ppb", "rho_flag"]),
-        "oxygen": oxygen_df.select(["datetime_utc", "oxygen_umol_kg"]),         
-        "hydrofia": hydrofia_df.select(["datetime_utc", "ta_hydrofia", "ta_hydrofia_flag", "ta_discrete", "ta_discrete_flag"]),
+        "oxygen": oxygen_df.select(["datetime_utc", "oxygen_umol_kg"]),
+        "hydrofia": hydrofia_df.select(
+            [
+                "datetime_utc",
+                "ta_hydrofia",
+                "ta_hydrofia_flag",
+                "ta_discrete",
+                "ta_discrete_flag",
+                "dic_discrete",
+                "dic_discrete_flag",
+            ]
+        ),
     }
     
     resample_interval = config["resample"].get("resample_interval")

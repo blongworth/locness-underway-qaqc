@@ -226,6 +226,8 @@ def _(df, pl):
         pl.col("ta_hydrofia_flag"),
         pl.col("ta_discrete"),
         pl.col("ta_discrete_flag"),
+        pl.col("dic_discrete"),
+        pl.col("dic_discrete_flag"),
     ]).filter(
         pl.col("ta_hydrofia").is_not_null()
     )
