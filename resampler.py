@@ -1,22 +1,15 @@
 """
-Persistent resampler for raw sensor data.
-
-This module provides a stateful resampler that:
-1. Tracks which raw data has been processed to avoid duplicates
-2. Maintains pH history for moving average calculations
-3. Efficiently handles incremental resampling operations
+resampler for raw sensor data.
 """
 
-import sqlite3
-import pandas as pd
 import logging
-from typing import Optional, Dict
 from isfetphcalc import calc_ph
 import polars as pl
 
 def resample_polars_dfs(dfs: dict[str, pl.DataFrame], interval: str) -> pl.DataFrame:
     """Resample multiple Polars DataFrames to a regular time grid.
-    
+     Avoids missing misaligned samples by binning data into time intervals.
+
     Args:
         dfs: Dict of DataFrames with datetime_utc column
         interval: Resampling interval (e.g. '2s')
@@ -29,7 +22,7 @@ def resample_polars_dfs(dfs: dict[str, pl.DataFrame], interval: str) -> pl.DataF
     if not valid_dfs:
         return pl.DataFrame()
     
-    # Get time range from all dataframes efficiently
+    # Get time range
     time_bounds = pl.concat([
         df.select(
             pl.col('datetime_utc').min().alias('min'),
@@ -44,128 +37,51 @@ def resample_polars_dfs(dfs: dict[str, pl.DataFrame], interval: str) -> pl.DataF
         return pl.DataFrame()
     
     start_time, end_time = time_bounds.row(0)
-    seconds = int(interval[:-1])  # Extract seconds from interval string
+    seconds = int(interval[:-1])
     
-    # Create time grid using Polars datetime_range
-    result = pl.DataFrame({
+    # Concatenate all data
+    combined = pl.concat(valid_dfs.values(), how='diagonal')
+    
+    # Bin each timestamp to its interval boundary
+    combined = combined.with_columns(
+        (pl.col('datetime_utc').dt.truncate(f'{seconds}s')).alias('time_bin')
+    )
+    
+    # Aggregate by time bin
+    # For flag columns, take the first value; for others, use mean
+    numeric_cols = combined.select(pl.col(pl.Float64, pl.Int8, pl.Int32, pl.Int64)).columns
+    
+    agg_exprs = []
+    for col in numeric_cols:
+        if 'flag' in col.lower():
+            # Take first value for flag columns
+            agg_exprs.append(pl.col(col).max().alias(col))
+        else:
+            # Use mean for numeric columns
+            agg_exprs.append(pl.col(col).mean().alias(col))
+    
+    result = combined.group_by('time_bin').agg(agg_exprs).rename({'time_bin': 'datetime_utc'})
+    
+    # Create full time grid and left join
+    # Truncate start_time to the nearest interval boundary
+    start_truncated = start_time.replace(
+        microsecond=0,
+        second=(start_time.second // seconds) * seconds
+    )
+    
+    time_grid = pl.DataFrame({
         'datetime_utc': pl.datetime_range(
-            start_time,
+            start_truncated,
             end_time,
             interval=f'{seconds}s',
             eager=True
         )
     })
     
-    # Process each dataframe
-    for df in valid_dfs.values():
-        # Sort both dataframes by datetime
-        df = df.sort('datetime_utc')
-        result = result.sort('datetime_utc')
-        
-        # Perform asof join with 2s tolerance
-        result = result.join_asof(
-            df, 
-            on='datetime_utc',
-            strategy='backward',
-            tolerance='2s'
-        )
+    result = time_grid.join(result, on='datetime_utc', how='left')
     
-    return result
+    return result.sort('datetime_utc')
 
-def resample_and_join(raw_data: Dict[str, pd.DataFrame], resample_interval: str) -> pd.DataFrame:
-    """
-    Resample raw data tables using mean aggregation and join into a single DataFrame.
-    
-    Uses mean aggregation for numeric columns (pandas automatically drops NaN values).
-    For non-numeric columns, uses the first value in each time bin.
-    
-    Args:
-        raw_data: Dict mapping table names to DataFrames
-        resample_interval: Time interval for resampling (e.g., '2S' for 2 seconds)
-        
-    Returns:
-        Resampled and joined DataFrame
-    """
-    expected_cols = ['datetime_utc', 'latitude', 'longitude', 'rho_ppb', 
-                    'ph_total', 'vrse', 'temp', 'salinity']
-    
-    # Check if all DataFrames are empty
-    if all(df.empty for df in raw_data.values()):
-        return pd.DataFrame(columns=expected_cols)
-    
-    # First, find the overall time range and create a proper time grid
-    all_timestamps = []
-    for df in raw_data.values():
-        if not df.empty and 'datetime_utc' in df.columns:
-            all_timestamps.extend(df['datetime_utc'].tolist())
-    
-    if not all_timestamps:
-        return pd.DataFrame(columns=expected_cols)
-    
-    # Create a regular time grid based on the resampling interval
-    min_time = min(all_timestamps)
-    max_time = max(all_timestamps)
-    
-    # Round min_time down to nearest interval boundary
-    resample_freq = pd.Timedelta(resample_interval)
-    min_time_rounded = min_time.floor(resample_freq)
-    
-    # Create time grid
-    time_grid = pd.date_range(
-        start=min_time_rounded,
-        end=max_time + resample_freq,
-        freq=resample_interval
-    )
-    
-    # Create base DataFrame with the time grid
-    result = pd.DataFrame({'datetime_utc': time_grid})
-    result = result.set_index('datetime_utc')
-    
-    # Resample each table to the time grid using mean aggregation
-    for table, df in raw_data.items():
-        if df.empty or 'datetime_utc' not in df.columns:
-            continue
-            
-        # Prepare DataFrame for resampling
-        df_prep = df.copy()
-        df_prep = df_prep.drop_duplicates(subset='datetime_utc')
-        df_prep = df_prep.set_index('datetime_utc')
-        
-        # Get numeric columns for mean aggregation
-        numeric_cols = df_prep.select_dtypes(include=['number']).columns
-        
-        if len(numeric_cols) > 0:
-            # Use mean aggregation for numeric columns (pandas already drops NaN by default)
-            df_resampled = df_prep[numeric_cols].resample(resample_interval).mean()
-            
-            # For non-numeric columns, use first value (or could use mode)
-            non_numeric_cols = df_prep.select_dtypes(exclude=['number']).columns
-            if len(non_numeric_cols) > 0:
-                df_non_numeric = df_prep[non_numeric_cols].resample(resample_interval).first()
-                df_resampled = df_resampled.join(df_non_numeric)
-        else:
-            # No numeric columns, just use first value for all
-            df_resampled = df_prep.resample(resample_interval).first()
-        
-        # Reindex to match our time grid
-        df_resampled = df_resampled.reindex(time_grid)
-        
-        # Join to result
-        result = result.join(df_resampled, how='left')
-    
-    # Reset index and filter to only times where we have some data
-    result = result.reset_index()
-    
-    # Remove rows that are completely empty (no sensor data)
-    data_cols = [col for col in result.columns if col != 'datetime_utc']
-    result = result.dropna(subset=data_cols, how='all')
-    
-    # Ensure all expected columns exist
-    for col in expected_cols:
-        if col not in result.columns:
-            result[col] = pd.NA
-    
-    return result[expected_cols]
 
 def add_corrected_ph(df: pl.DataFrame, ph_k0: float, ph_k2: float) -> pl.DataFrame:
     """Add corrected pH column to Polars DataFrame using the vectorized isfetphcalc.calc_ph."""
