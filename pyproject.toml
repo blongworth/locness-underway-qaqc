@@ -23,6 +23,7 @@ dependencies = [
     "xarray>=2025.10.1",
     "netcdf4>=1.7.3",
     "fastexcel>=0.16.0",
+    "pyzmq>=27.1.0",
 ]
 
 [tool.uv.sources]

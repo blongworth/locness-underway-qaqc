@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.15.5"
+__generated_with = "0.17.8"
 app = marimo.App(width="medium")
 
 
@@ -15,7 +15,7 @@ def _():
 
 @app.cell
 def _(pl):
-    df = pl.read_parquet("output/loc02_uw_qc.parquet")
+    df = pl.read_parquet("../output/loc02_uw_qc.parquet")
     df
     return (df,)
 
@@ -118,7 +118,9 @@ def _(alt, resampled):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""Small spikes do not show in 50 ppb bucket test (2025-07-29 to 2025-07-31). I suspect these are small air bubbles in the underway system. Also need to investigate whether dips and humps correlate with flow issues. Value definitely spikes when flow interrupted for ph sensor changes.""")
+    mo.md(r"""
+    Small spikes do not show in 50 ppb bucket test (2025-07-29 to 2025-07-31). I suspect these are small air bubbles in the underway system. Also need to investigate whether dips and humps correlate with flow issues. Value definitely spikes when flow interrupted for ph sensor changes.
+    """)
     return
 
 
@@ -152,7 +154,9 @@ def _(alt, pl, uf_res):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""Temp is also spiky/noisy. Not sure what's going on here.""")
+    mo.md(r"""
+    Temp is also spiky/noisy. Not sure what's going on here.
+    """)
     return
 
 
@@ -215,8 +219,53 @@ def _(alt, df, pl):
 
 
 @app.cell
+def _(df, pl):
+    hy_df = df.select([
+        pl.col("datetime_utc"),
+        pl.col("ta_hydrofia"),
+        pl.col("ta_hydrofia_flag"),
+        pl.col("ta_discrete"),
+        pl.col("ta_discrete_flag"),
+    ]).filter(
+        pl.col("ta_hydrofia").is_not_null()
+    )
+
+    hy_df
+    return (hy_df,)
+
+
+@app.cell
+def _(alt, hy_df):
+
+    _base = alt.Chart(hy_df).encode(
+        x=alt.X("datetime_utc:T", title="Datetime (UTC)")
+    )
+
+    _line = _base.mark_line().encode(
+        y=alt.Y("ta_hydrofia:Q", title="ta_hydrofia", scale=alt.Scale(zero=False)),
+        tooltip=[
+            alt.Tooltip("datetime_utc:T", title="Date and Time", format="%Y-%m-%d %H:%M:%S"),
+            alt.Tooltip("ta_hydrofia:Q", title="ta_hydrofia"),
+        ],
+    )
+
+    _points = _base.mark_point(filled=True, size=60, color="red").transform_filter(
+        alt.datum.ta_discrete != None
+    ).encode(
+        y=alt.Y("ta_discrete:Q", title="ta_discrete"),
+        tooltip=[
+            alt.Tooltip("datetime_utc:T", title="Date and Time", format="%Y-%m-%d %H:%M:%S"),
+            alt.Tooltip("ta_discrete:Q", title="ta_discrete"),
+        ],
+    )
+
+    alt.layer(_line, _points).properties(width=800, height=300).interactive()
+    return
+
+
+@app.cell
 def _(pl):
-    rho_df = pl.read_parquet("output/loc02_rho_data.parquet")
+    rho_df = pl.read_parquet("../output/loc02_rho_data.parquet")
     rho_df.filter(
          (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 17, 1)) &
         (pl.col('datetime_utc') < pl.datetime(2025, 8, 13, 17, 2))
@@ -226,11 +275,16 @@ def _(pl):
 
 @app.cell
 def _(pl):
-    ph_df = pl.read_parquet("output/loc02_ph_data.parquet")
+    ph_df = pl.read_parquet("../output/loc02_ph_data.parquet")
     ph_df.filter(
          (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 17, 1)) &
         (pl.col('datetime_utc') < pl.datetime(2025, 8, 13, 17, 2))
     )
+    return
+
+
+@app.cell
+def _():
     return
 
 
