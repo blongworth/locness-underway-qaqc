@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.17.8"
+__generated_with = "0.17.7"
 app = marimo.App(width="medium")
 
 
@@ -15,7 +15,7 @@ def _():
 
 @app.cell
 def _(pl):
-    df = pl.read_parquet("../output/loc02_uw_qc.parquet")
+    df = pl.read_parquet("output/loc02_uw_qc.parquet")
     df
     return (df,)
 
@@ -265,7 +265,7 @@ def _(alt, hy_df):
 
 @app.cell
 def _(pl):
-    rho_df = pl.read_parquet("../output/loc02_rho_data.parquet")
+    rho_df = pl.read_parquet("output/loc02_rho_data.parquet")
     rho_df.filter(
          (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 17, 1)) &
         (pl.col('datetime_utc') < pl.datetime(2025, 8, 13, 17, 2))
@@ -275,7 +275,7 @@ def _(pl):
 
 @app.cell
 def _(pl):
-    ph_df = pl.read_parquet("../output/loc02_ph_data.parquet")
+    ph_df = pl.read_parquet("output/loc02_ph_data.parquet")
     ph_df.filter(
          (pl.col('datetime_utc') > pl.datetime(2025, 8, 13, 17, 1)) &
         (pl.col('datetime_utc') < pl.datetime(2025, 8, 13, 17, 2))
