@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.17.7"
+__generated_with = "0.18.0"
 app = marimo.App(width="medium")
 
 
@@ -9,13 +9,18 @@ def _():
     import marimo as mo
     import polars as pl
     import altair as alt
+    import holoviews as hv
+    from holoviews.operation.datashader import datashade
+    from holoviews.operation import decimate
+
+    hv.extension('bokeh')
     alt.data_transformers.enable("vegafusion")
-    return alt, mo, pl
+    return alt, decimate, hv, mo, pl
 
 
 @app.cell
 def _(pl):
-    df = pl.read_parquet("output/loc02_uw_qc.parquet")
+    df = pl.read_parquet("../output/loc02_uw_qc.parquet")
     df
     return (df,)
 
@@ -93,8 +98,18 @@ def _(alt, uf_res):
 def _(alt, resampled):
     alt.Chart(resampled).mark_line().encode(
         x="datetime_utc",
-        y=alt.Y(f"ph_corrected:Q", title="Calibrated pH", scale=alt.Scale(zero=False)),
+        y=alt.Y("ph_corrected:Q", title="Calibrated pH", scale=alt.Scale(zero=False)),
     ).interactive()
+    return
+
+
+@app.cell
+def _(decimate, df, hv, pl):
+    # Create a curve with datetime and ph_corrected
+    curve = hv.Curve(df.filter(pl.col("ph_flag") == 2), 'datetime_utc', 'ph_corrected', label='pH (calibrated)')
+
+    # Apply datashading to the curve for better performance with large datasets
+    decimate(curve).opts(width=800, height=400, title="Calibrated pH over Time")
     return
 
 
@@ -102,7 +117,7 @@ def _(alt, resampled):
 def _(alt, resampled):
     alt.Chart(resampled).mark_line().encode(
         x="datetime_utc",
-        y=alt.Y(f"rho_ppb:Q", title="Rhodamine [ppb]", scale=alt.Scale(zero=False)),
+        y=alt.Y("rho_ppb:Q", title="Rhodamine [ppb]", scale=alt.Scale(zero=False)),
     ).interactive()
     return
 
